@@ -22,7 +22,7 @@ from .log import log
 from .widgets.asi import AirspeedIndicator
 from .widgets.msi import MotorspeedIndicator, MotorspeedIndicator2
 from .widgets.bar import Bar
-from .widgets.chart import SimpleChart
+from .widgets.chart import SimpleChart, JourneyChart
 from .widgets.compass import Compass
 from .widgets.compass_arrow import CompassArrow
 from .widgets.gps import GPSLock
@@ -105,7 +105,8 @@ class Converters:
 
 
 def layout_from_xml(xml, renderer, framemeta, font, privacy, include=lambda name: True,
-                    decorator: Optional[WidgetProfiler] = None, converters: Converters = Converters()):
+                    decorator: Optional[WidgetProfiler] = None, converters: Converters = Converters(),
+                    reference_framemeta=None):
     root = ET.fromstring(xml)
 
     fonts = {}
@@ -121,6 +122,7 @@ def layout_from_xml(xml, renderer, framemeta, font, privacy, include=lambda name
         renderer=renderer,
         framemeta=framemeta,
         converters=converters,
+        reference_framemeta=reference_framemeta,
     )
 
     def name_of(element):
@@ -394,8 +396,13 @@ class FloatRange:
 
 class Widgets:
 
-    def __init__(self, font, privacy, renderer, framemeta, converters):
+    def __init__(self, font, privacy, renderer, framemeta, converters, reference_framemeta=None):
         self.framemeta = framemeta
+        # The reference framemeta covers the whole journey (e.g. the entire FIT/GPX
+        # track), even when `framemeta` has been trimmed to a single video clip.
+        # Widgets can opt in to using it to show whole-ride context (full map
+        # extent, full elevation profile). Defaults to framemeta for back-compat.
+        self.reference_framemeta = reference_framemeta if reference_framemeta is not None else framemeta
         self.renderer = renderer
         self.privacy = privacy
         self.font = font
@@ -491,14 +498,19 @@ class Widgets:
             rotate=battrib(element, "rotate", d=True)
         )
 
-    @allow_attributes({"x", "y", "size", "corner_radius", "opacity", "fill", "line-width", "loc-fill", "loc-outline", "loc-size"})
+    @allow_attributes({"x", "y", "size", "corner_radius", "opacity", "fill", "line-width", "loc-fill", "loc-outline", "loc-size", "extent"})
     def create_journey_map(self, element: ET.Element, entry, **kwargs) -> Widget:
+        # extent="ride" draws the whole journey (full FIT/GPX track), even when
+        # rendering a single clip; extent="clip" (default) draws only the current
+        # framemeta's segment, preserving the original behaviour.
+        extent = attrib(element, "extent", d="clip")
+        timeseries = self.reference_framemeta if extent == "ride" else self.framemeta
         return journey_map(
             at(element),
             entry,
             privacy_zone=self.privacy,
             renderer=self.renderer,
-            timeseries=self.framemeta,
+            timeseries=timeseries,
             size=iattrib(element, "size", d=256),
             corner_radius=iattrib(element, "corner_radius", 0),
             opacity=fattrib(element, "opacity", 0.7, r=FloatRange(0.0, 1.0)),
@@ -545,7 +557,8 @@ class Widgets:
 
     @allow_attributes({"x", "y", "metric", "units", "seconds",
                        "samples", "values", "textsize", "filled",
-                       "height", "width", "marker-size", "bg", "fill", "line", "text"})
+                       "height", "width", "marker-size", "bg", "fill", "line", "text",
+                       "range"})
     def create_chart(self, element: ET.Element, entry, **kwargs) -> Widget:
         accessor = metric_accessor_from(attrib(element, "metric", d="alt"))
         converter = self.converters.converter(attrib(element, "units", d="metres"))
@@ -557,17 +570,41 @@ class Widgets:
                 return v.magnitude
             return None
 
+        title = self._font(element, "textsize", d=16)
+        values = battrib(element, "values", d=True)
+        if not values:
+            title = None
+
+        # range="ride" renders the whole journey's profile statically (full
+        # min/max scale) with a marker tracking the current position. range="window"
+        # (default) keeps the original scrolling fixed-duration window behaviour.
+        chart_range = attrib(element, "range", d="window")
+        if chart_range == "ride":
+            return Translate(
+                at=at(element),
+                widget=JourneyChart(
+                    framemeta=self.reference_framemeta,
+                    metric=metric_key,
+                    location_time_fn=lambda: entry().dt.timestamp(),
+                    font=title,
+                    filled=battrib(element, "filled", d=True),
+                    height=iattrib(element, "height", d=64),
+                    width=iattrib(element, "width", d=256),
+                    samples=iattrib(element, "samples", d=256),
+                    marker_size=iattrib(element, "marker-size", d=4),
+                    bg=rgbattr(element, "bg", d=(0, 0, 0, 170)),
+                    fill=rgbattr(element, "fill", d=(91, 113, 146, 170)),
+                    line=rgbattr(element, "line", d=(255, 255, 255, 170)),
+                    text=rgbattr(element, "text", d=(255, 255, 255, 170)),
+                )
+            )
+
         window = Window(
             self.framemeta,
             duration=timeunits(seconds=iattrib(element, "seconds", d=5 * 60)),
             samples=iattrib(element, "samples", d=256),
             key=metric_key
         )
-
-        title = self._font(element, "textsize", d=16)
-        values = battrib(element, "values", d=True)
-        if not values:
-            title = None
 
         return Translate(
             at=at(element),

@@ -50,7 +50,7 @@ def accepter_from_args(include, exclude):
 
 
 def create_desired_layout(dimensions, layout, layout_xml: Path, include, exclude, renderer, timeseries, font,
-                          privacy_zone, profiler, converters: Converters):
+                          privacy_zone, profiler, converters: Converters, reference_timeseries=None):
     accepter = accepter_from_args(include, exclude)
 
     if layout_xml:
@@ -61,7 +61,7 @@ def create_desired_layout(dimensions, layout, layout_xml: Path, include, exclude
         try:
             return layout_from_xml(
                 load_xml_layout(resource_name), renderer, timeseries, font, privacy_zone, include=accepter,
-                decorator=profiler, converters=converters
+                decorator=profiler, converters=converters, reference_framemeta=reference_timeseries
             )
         except FileNotFoundError:
             raise IOError(f"Unable to locate bundled layout resource: {resource_name}. "
@@ -72,7 +72,7 @@ def create_desired_layout(dimensions, layout, layout_xml: Path, include, exclude
     elif layout == "xml":
         return layout_from_xml(
             load_xml_layout(layout_xml), renderer, timeseries, font, privacy_zone, include=accepter,
-            decorator=profiler, converters=converters
+            decorator=profiler, converters=converters, reference_framemeta=reference_timeseries
         )
     else:
         raise ValueError(f"Unsupported layout {args.layout_creator}")
@@ -202,6 +202,15 @@ if __name__ == "__main__":
                     )
                     video_duration = frame_meta.duration()
                     packets_per_second = 10
+
+                    # Build an untrimmed framemeta covering the whole journey, so
+                    # widgets with extent="ride" / range="ride" can show full-ride
+                    # context (complete map / elevation profile) even when this
+                    # render is just one clip from a longer track.
+                    reference_frame_meta = timeseries_to_framemeta(
+                        fit_or_gpx_timeseries,
+                        units
+                    )
                 else:
                     inputpath = assert_file_exists(args.input)
 
@@ -224,6 +233,9 @@ if __name__ == "__main__":
                     gpmd_filters.poor_report(counter)
 
                     frame_meta = gopro.framemeta
+                    # No separate whole-ride reference in GoPro-video mode; the
+                    # widgets fall back to frame_meta when reference is None.
+                    reference_frame_meta = None
 
                     dimensions = gopro.recording.video.dimension
                     video_duration = gopro.recording.video.duration
@@ -365,7 +377,8 @@ if __name__ == "__main__":
                     font=font,
                     privacy_zone=privacy_zone,
                     profiler=profiler,
-                    converters=unit_converters
+                    converters=unit_converters,
+                    reference_timeseries=reference_frame_meta
                 )
 
                 overlay = Overlay(framemeta=frame_meta, create_widgets=layout_creator)
