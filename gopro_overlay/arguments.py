@@ -190,7 +190,11 @@ def gopro_dashboard_arguments(args=None):
     if args.use_gpx_only and not args.input and not args.overlay_size:
         quit("--overlay-size is required with --use-gpx-only (when no input video is given)")
 
-    if args.use_gpx_only and args.generate != "default":
-        quit("--generate cannot be combined with --use-gpx-only")
+    # With --use-gpx-only and no input video, overlay generation is implied, so an
+    # explicit --generate is redundant/ambiguous. When an input video IS given (for
+    # timing & dimensions), --generate overlay is a valid request: emit a transparent
+    # overlay trimmed to that clip's window instead of compositing onto the video.
+    if args.use_gpx_only and args.generate != "default" and not args.input:
+        quit("--generate cannot be combined with --use-gpx-only when no input video is given")
 
     return args

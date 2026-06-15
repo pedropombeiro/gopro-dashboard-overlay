@@ -53,9 +53,16 @@ def test_overlay_size_required_with_gpx_only_unless_video_file():
     assert do_args("--use-gpx-only", "--gpx", "bob", input="something")
 
 
-def test_gpx_only_implies_generate_overlay_so_disallow_it():
+def test_gpx_only_without_video_implies_generate_overlay_so_disallow_it():
     with pytest.raises(SystemExit):
         assert do_args("--use-gpx-only", "--gpx", "bob", "--overlay-size", "10x10", "--generate", "overlay", input=None)
+
+
+def test_gpx_only_with_video_allows_explicit_generate_overlay():
+    # With an input video (for timing & dimensions), an explicit --generate overlay
+    # is a valid request for a transparent overlay trimmed to the clip's window.
+    args = do_args("--use-gpx-only", "--gpx", "bob", "--generate", "overlay", input="something")
+    assert args.generate == "overlay"
 
 
 def test_gpx_only_enables_video_time_start():
